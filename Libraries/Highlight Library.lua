@@ -31,6 +31,8 @@ GetOutlineFromGrid(Grid, Nx, Ny, MinX, MinY, Step)
   - Returns: table - Boundary outline
 ]]
 
+----------------------------------------------------------------------------------------------------------------------------------------
+
 local function IsInPoly(Px, Py, Poly)
     local Inside, J = false, #Poly
     for I = 1, J do
