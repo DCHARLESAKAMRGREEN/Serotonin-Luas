@@ -13,22 +13,6 @@ Highlight:GetOutline(Parts, Step, Padding)
   - Step: number - Grid resolution (lower = more precise, higher = faster) [default: 1]
   - Padding: number - Extra space around bounding box [default: Step * 2]
   - Returns: table - Array of {x, y} points forming the outline polygon
-
-Internal Functions:
-------------------
-IsInPoly(Px, Py, Poly)
-  - Ray casting algorithm for point-in-polygon testing
-  - Px, Py: number - Point coordinates
-  - Poly: table - Polygon points
-  - Returns: boolean
-
-GetOutlineFromGrid(Grid, Nx, Ny, MinX, MinY, Step)
-  - Marching squares contour tracing from binary grid
-  - Grid: table - Boolean occupancy grid
-  - Nx, Ny: number - Grid dimensions
-  - MinX, MinY: number - Grid world offset
-  - Step: number - Grid cell size
-  - Returns: table - Boundary outline
 ]]
 
 ----------------------------------------------------------------------------------------------------------------------------------------
@@ -97,43 +81,60 @@ end
 local Highlight = {
     PolyBuffer = {},
     GridBuffer = {},
-    OutlineBuffer = {}
+    OutlineBuffer = {},
+    ScreenPointBuffer = {}
 }
 
 function Highlight:GetOutline(Parts, Step, Padding)
-    local Polygons, PolyBuffer, Grid = self.PolyBuffer, self.PolyBuffer, self.GridBuffer
+    local Polygons, Grid, ScreenPoints = self.PolyBuffer, self.GridBuffer, self.ScreenPointBuffer
     for I = 1, #Polygons do Polygons[I] = nil end
     for Y = 1, #Grid do Grid[Y] = nil end
 
-    local Count = 0
+    local Count, HasValidPoint = 0, false
     for I = 1, #Parts do
         local Corners = draw.GetPartCorners(Parts[I])
         if Corners then
-            local Points, PCount = {}, 0
+            local PCount = 0
             for J = 1, #Corners do
                 local SX, SY, On = utility.WorldToScreen(Corners[J])
-                if On then PCount = PCount + 1 Points[PCount] = {SX, SY} end
+                if On then 
+                    PCount = PCount + 1 
+                    ScreenPoints[PCount] = {SX, SY}
+                    HasValidPoint = true
+                end
             end
             if PCount >= 3 then
-                local Hull = draw.ComputeConvexHull(Points)
-                if Hull and #Hull >= 3 then Count = Count + 1 Polygons[Count] = Hull end
+                local Hull = draw.ComputeConvexHull(ScreenPoints)
+                if Hull and #Hull >= 3 then 
+                    Count = Count + 1 
+                    Polygons[Count] = Hull 
+                end
             end
+            for K = PCount + 1, #ScreenPoints do ScreenPoints[K] = nil end
         end
     end
-    if Count == 0 then return self.OutlineBuffer end
+    
+    if Count == 0 or not HasValidPoint then 
+        for I = 1, #self.OutlineBuffer do self.OutlineBuffer[I] = nil end
+        return self.OutlineBuffer 
+    end
 
     local MinX, MinY, MaxX, MaxY = math.huge, math.huge, -math.huge, -math.huge
     for I = 1, Count do
         local Poly = Polygons[I]
         for J = 1, #Poly do
             local PX, PY = Poly[J][1], Poly[J][2]
-            if PX < MinX then MinX = PX end
-            if PY < MinY then MinY = PY end
-            if PX > MaxX then MaxX = PX end
-            if PY > MaxY then MaxY = PY end
+            MinX = PX < MinX and PX or MinX
+            MinY = PY < MinY and PY or MinY
+            MaxX = PX > MaxX and PX or MaxX
+            MaxY = PY > MaxY and PY or MaxY
         end
     end
-    if MinX == math.huge then return self.OutlineBuffer end
+    
+    if MinX == math.huge then 
+        for I = 1, #self.OutlineBuffer do self.OutlineBuffer[I] = nil end
+        return self.OutlineBuffer 
+    end
 
     Step = Step or 1
     Padding = Padding or Step * 2
@@ -141,10 +142,11 @@ function Highlight:GetOutline(Parts, Step, Padding)
     MaxX, MaxY = math.ceil(MaxX) + Padding, math.ceil(MaxY) + Padding
 
     local W, H = math.max(1, math.floor((MaxX - MinX) / Step) + 1), math.max(1, math.floor((MaxY - MinY) / Step) + 1)
+    
     for Y = 1, H do
-        local Row = Grid[Y] or {}
+        local Row = Grid[Y]
+        if not Row then Row = {} Grid[Y] = Row end
         for X = 1, W do Row[X] = false end
-        Grid[Y] = Row
     end
 
     for I = 1, Count do
@@ -152,13 +154,16 @@ function Highlight:GetOutline(Parts, Step, Padding)
         local PMinX, PMinY, PMaxX, PMaxY = math.huge, math.huge, -math.huge, -math.huge
         for J = 1, #Poly do
             local PX, PY = Poly[J][1], Poly[J][2]
-            if PX < PMinX then PMinX = PX end
-            if PY < PMinY then PMinY = PY end
-            if PX > PMaxX then PMaxX = PX end
-            if PY > PMaxY then PMaxY = PY end
+            PMinX = PX < PMinX and PX or PMinX
+            PMinY = PY < PMinY and PY or PMinY
+            PMaxX = PX > PMaxX and PX or PMaxX
+            PMaxY = PY > PMaxY and PY or PMaxY
         end
-        local SX, SY = math.max(1, math.floor((PMinX - MinX) / Step) - 1), math.max(1, math.floor((PMinY - MinY) / Step) - 1)
-        local EX, EY = math.min(W, math.floor((PMaxX - MinX) / Step) + 1), math.min(H, math.floor((PMaxY - MinY) / Step) + 1)
+        local SX = math.max(1, math.floor((PMinX - MinX) / Step) - 1)
+        local SY = math.max(1, math.floor((PMinY - MinY) / Step) - 1)
+        local EX = math.min(W, math.floor((PMaxX - MinX) / Step) + 1)
+        local EY = math.min(H, math.floor((PMaxY - MinY) / Step) + 1)
+        
         for Y = SY, EY do
             local Row = Grid[Y]
             for X = SX, EX do
@@ -169,33 +174,27 @@ function Highlight:GetOutline(Parts, Step, Padding)
     return GetOutlineFromGrid(Grid, W, H, MinX, MinY, Step, self.OutlineBuffer)
 end
 
-----------------------------------------------------------------------------------------------------------------------------------------
-
---[[
-Example Usage of Highlight Library
-----------------------------------
-
-Draws a single clean white outline around the local player's character bones.
-]]
-
-local Bones = {
-    "Head","UpperTorso","LowerTorso",
-    "LeftUpperArm","LeftLowerArm","LeftHand",
-    "RightUpperArm","RightLowerArm","RightHand",
-    "LeftUpperLeg","LeftLowerLeg","LeftFoot",
-    "RightUpperLeg","RightLowerLeg","RightFoot",
-    "Torso","Left Arm","Right Arm","Left Leg","Right Leg"
-}
+local Bones = {"Head","UpperTorso","LowerTorso","LeftUpperArm","LeftLowerArm","LeftHand","RightUpperArm","RightLowerArm","RightHand","LeftUpperLeg","LeftLowerLeg","LeftFoot","RightUpperLeg","RightLowerLeg","RightFoot","Torso","Left Arm","Right Arm","Left Leg","Right Leg"}
 
 local function Render()
     local Player = game.LocalPlayer
-    if not Player or not Player.Character then return end
+    if not Player then return end
+    local Char = Player.Character
+    if not Char then return end
 
-    local Parts, Count = {}, 0
+    local Parts, Count, OnScreen = {}, 0, false
     for I = 1, #Bones do
-        local Part = Player.Character:FindFirstChild(Bones[I])
-        if Part then Count = Count + 1 Parts[Count] = Part end
+        local Part = Char:FindFirstChild(Bones[I])
+        if Part then
+            local Pos = Part.Position
+            local _, _, On = utility.WorldToScreen(Pos)
+            if On then OnScreen = true end
+            Count = Count + 1
+            Parts[Count] = Part
+        end
     end
+    
+    if not OnScreen or Count == 0 then return end
 
     local Outline = Highlight:GetOutline(Parts, 1)
     if #Outline >= 3 then
